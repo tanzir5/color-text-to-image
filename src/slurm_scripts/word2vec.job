@@ -1,0 +1,13 @@
+#!/bin/bash
+#SBATCH --job-name=word2vec.job
+#SBATCH --output=word2vec_cv_out.txt
+#SBATCH --error=word2vec_cv_err.txt
+#SBATCH --time=2-02:00
+#SBATCH --mem=50000
+#SBATCH --gres=gpu:5
+
+# Test nvidia-smi
+nvidia-smi
+source /home/tpial/color_texttoimage/word2vec-env/bin/activate
+python3 /home/tpial/color_texttoimage/cv_word2vec.py
+

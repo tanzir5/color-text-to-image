@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH --job-name=roberta.job
+#SBATCH --output=roberta_cv_out.txt
+#SBATCH --error=roberta_cv_err.txt
+#SBATCH --time=2-02:00
+#SBATCH --mem=50000
+#SBATCH --gres=gpu:5
+
+# Test nvidia-smi
+nvidia-smi
+source /home/tpial/myenv/bin/activate
+python3 /home/tpial/color_texttoimage/finetune_roberta.py

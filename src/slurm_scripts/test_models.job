@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH --job-name=test_models.job
+#SBATCH --output=test_models_out_clip.txt
+#SBATCH --error=test_models_err_clip.txt
+#SBATCH --time=2-02:00
+#SBATCH --mem=50000
+#SBATCH --gres=gpu:5
+
+# Test nvidia-smi
+nvidia-smi
+source /home/tpial/myenv/bin/activate
+python3 /home/tpial/color_texttoimage/test_models.py

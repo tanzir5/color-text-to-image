@@ -1,0 +1,14 @@
+#!/bin/bash
+#SBATCH --job-name=create.job
+#SBATCH --output=clip_out_1e6.txt
+#SBATCH --error=clip_err_1e6.txt
+#SBATCH --time=2-02:00
+#SBATCH --mem=50000
+#SBATCH --gres=gpu:1
+#SBATCH --nodelist=quadro2
+
+
+# Test nvidia-smi
+nvidia-smi
+source /home/tpial/myenv/bin/activate
+python3 /home/tpial/color_texttoimage/finetune_clip.py 
