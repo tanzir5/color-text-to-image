@@ -4,7 +4,7 @@
 #SBATCH --error=clip_cv_err.txt
 #SBATCH --time=2-02:00
 #SBATCH --mem=50000
-#SBATCH --gres=gpu:5
+#SBATCH --gres=gpu:1
 
 # Test nvidia-smi
 nvidia-smi

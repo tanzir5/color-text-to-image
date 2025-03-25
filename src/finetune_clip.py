@@ -23,6 +23,8 @@ from math import inf
 logging.basicConfig(level=logging.INFO)
 EARLY_STOP = 5
 
+CNN = True
+
 # 1. Define a Dataset that reads CSV (first column: prompt, second column: image path)
 class SinglePixelDataset(Dataset):
     def __init__(self, csv_path, tokenizer, max_length=50):
@@ -65,7 +67,7 @@ class SinglePixelDataset(Dataset):
 
 # 2. Define a model that uses the actual CLIP text encoder from Hugging Face
 #    (This is the real model from Hugging Face, not a toy MLP.)
-class CLIPTextToPixel(nn.Module):
+class CLIPTextToPixelFC(nn.Module):
     def __init__(self, text_encoder: CLIPTextModel):
         super().__init__()
         self.text_encoder = text_encoder
@@ -80,6 +82,42 @@ class CLIPTextToPixel(nn.Module):
         # Map to 3 outputs (RGB)
         pixel = self.fc(pooled)  # shape: (batch, 3)
         return pixel
+
+
+class CLIPTextToPixelCNN(nn.Module):
+    def __init__(self, text_encoder: nn.Module):
+        super().__init__()
+        self.text_encoder = text_encoder
+        hidden_size = self.text_encoder.config.hidden_size  # e.g. 768 for "openai/clip-vit-large-patch14"
+
+        # Conv1D in PyTorch uses (batch, in_channels, seq_len),
+        # so we'll permute the encoder outputs.
+        self.conv1d = nn.Conv1d(in_channels=hidden_size, out_channels=128, kernel_size=1)
+        self.pool = nn.AdaptiveMaxPool1d(1)
+        self.dropout = nn.Dropout(0.5)
+        self.fc = nn.Linear(128, 3)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, input_ids):
+        # text_encoder outputs [batch_size, seq_len, hidden_size]
+        outputs = self.text_encoder(input_ids=input_ids)
+        hidden_states = outputs.last_hidden_state  # (batch, seq_len, hidden_size)
+
+        # Permute to (batch, hidden_size, seq_len) for Conv1D
+        hidden_states = hidden_states.permute(0, 2, 1)  # now (batch, in_channels=hidden_size, seq_len)
+
+        # 1x1 Conv (pointwise) + tanh
+        x = torch.tanh(self.conv1d(hidden_states))
+
+        # Global max pooling across the sequence dimension
+        x = self.pool(x)  # -> (batch, out_channels=128, 1)
+        x = x.squeeze(-1)  # -> (batch, 128)
+
+        x = self.dropout(x)
+        x = self.fc(x)        # -> (batch, 3)
+        x = self.sigmoid(x)   # -> (batch, 3) in [0,1]
+
+        return x
 
 
 # 6. Define a simple training loop using MSE loss.
@@ -105,18 +143,19 @@ def train_one_epoch(model, dataloader, optimizer, device):
 
 def validate_one_epoch(model, dataloader, device):
     model.eval()
-    total_loss = 0.0
-    criterion = nn.MSELoss()
-
+    total_ciede = 0
+    predictions = []
+    targets = []
     with torch.no_grad():
         for input_ids, target_pixel in dataloader:
             input_ids = input_ids.to(device)
-            target_pixel = target_pixel.to(device)
-            pred_pixel = model(input_ids)
-            loss = criterion(pred_pixel, target_pixel)
-            total_loss += loss.item() * input_ids.size(0)
-    return total_loss / len(dataloader.dataset)
-
+            targets.append(target_pixel.cpu())
+            predictions.append(model(input_ids).cpu())
+    predictions = torch.cat(predictions, dim=0).numpy()  # shape: (N, 3)
+    targets = torch.cat(targets, dim=0).numpy()            # shape: (N, 3)
+    predictions *= 255.0
+    targets *= 255.0
+    return compute_ciede2000(targets, predictions).mean() 
 
 # ------------------------- #
 #  CIEDE2000 Computation    #
@@ -208,24 +247,27 @@ def cross_validate_clip_model(csv_path, model_name, tokenizer, device, folds=5, 
         
         # Instantiate a fresh model for this fold by reloading the text encoder
         text_encoder_fold = CLIPTextModel.from_pretrained(model_name)
-        model = CLIPTextToPixel(text_encoder_fold).to(device)
+        if CNN:
+            model = CLIPTextToPixelCNN(text_encoder_fold).to(device)
+        else:
+            model = CLIPTextToPixelFC(text_encoder_fold).to(device)
         
         optimizer = optim.AdamW(model.parameters(), lr=lr)
         best_model= None
-        best_val_loss = inf
+        best_val_metric = inf
         no_improve_count = 0
         
         # Train for a fixed number of epochs
         for epoch in range(num_epochs):
             train_loss = train_one_epoch(model, train_loader, optimizer, device)
-            val_loss = validate_one_epoch(model, val_loader, device)
-            if val_loss<best_val_loss:
+            val_metric = validate_one_epoch(model, val_loader, device)
+            if val_metric < best_val_metric:
                 best_model = copy.deepcopy(model)
-                best_val_loss = val_loss
+                best_val_metric = val_metric
                 no_improve_count = 0
             else:
                 no_improve_count +=1
-            print(f"Epoch {epoch + 1}/{num_epochs} - Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+            print(f"Epoch {epoch + 1}/{num_epochs} - Train Loss: {train_loss:.4f} | Val metric: {val_metric:.4f}")
             if no_improve_count>=EARLY_STOP:
                 break
         rmse, mae, ciede2000, r2 = compute_metrics(best_model, val_loader, device)
@@ -279,7 +321,7 @@ metrics_df, summary = cross_validate_clip_model(
     folds=10,          # For example, 10-fold CV
     batch_size=160,     # You can try batch sizes of 16 or 32
     num_epochs=1000,     # Adjust epochs based on training behavior
-    lr=5e-6,
+    lr=1e-5,
     output_dir="cv_results"
 )
 
