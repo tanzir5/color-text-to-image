@@ -63,8 +63,6 @@ class SinglePixelDataset(Dataset):
 
         return input_ids, target_pixel
 
-
-
 class CLIPTextToPixelCNN(nn.Module):
     def __init__(self, text_encoder: nn.Module):
         super().__init__()
@@ -100,8 +98,6 @@ class CLIPTextToPixelCNN(nn.Module):
 
         return x
 
-
-# 6. Define a simple training loop using MSE loss.
 def train_one_epoch(model, dataloader, optimizer, device):
     model.train()
     total_loss = 0.0
@@ -109,10 +105,10 @@ def train_one_epoch(model, dataloader, optimizer, device):
 
     for input_ids, target_pixel in  tqdm(dataloader):
         input_ids = input_ids.to(device)         # shape: (batch, max_length)
-        target_pixel = target_pixel.to(device)     # shape: (batch, 3)
+        target_pixel = target_pixel.to(device)   # shape: (batch, 3)
 
         optimizer.zero_grad()
-        pred_pixel = model(input_ids)              # shape: (batch, 3)
+        pred_pixel = model(input_ids)            # shape: (batch, 3)
         loss = criterion(pred_pixel, target_pixel)
         logging.info(f'TBL={loss.item():.3f}')
         loss.backward()
@@ -121,10 +117,8 @@ def train_one_epoch(model, dataloader, optimizer, device):
         total_loss += loss.item() * input_ids.size(0)
     return total_loss / len(dataloader.dataset)
 
-
 def validate_one_epoch(model, dataloader, device):
     model.eval()
-    total_ciede = 0
     predictions = []
     targets = []
     with torch.no_grad():
@@ -133,7 +127,7 @@ def validate_one_epoch(model, dataloader, device):
             targets.append(target_pixel.cpu())
             predictions.append(model(input_ids).cpu())
     predictions = torch.cat(predictions, dim=0).numpy()  # shape: (N, 3)
-    targets = torch.cat(targets, dim=0).numpy()            # shape: (N, 3)
+    targets = torch.cat(targets, dim=0).numpy()          # shape: (N, 3)
     predictions *= 255.0
     targets *= 255.0
     return compute_ciede2000(targets, predictions).mean() 
@@ -152,7 +146,6 @@ def compute_ciede2000(y_true, y_pred):
     y_pred_lab = color.rgb2lab(y_pred.reshape(-1, 1, 3)).reshape(-1, 3)
     return color.deltaE_ciede2000(y_true_lab, y_pred_lab)
 
-
 # ------------------------- #
 #     Metrics Computation   #
 # ------------------------- #
@@ -165,12 +158,12 @@ def compute_metrics(model, dataloader, device):
         for input_ids, target in dataloader:
             input_ids = input_ids.to(device)
             target = target.to(device)
-            outputs = model(input_ids)  # For CLIP, you might use just input_ids if no attention mask is needed
+            outputs = model(input_ids)
             predictions.append(outputs.cpu())
             targets.append(target.cpu())
 
     predictions = torch.cat(predictions, dim=0).numpy()  # shape: (N, 3)
-    targets = torch.cat(targets, dim=0).numpy()            # shape: (N, 3)
+    targets = torch.cat(targets, dim=0).numpy()          # shape: (N, 3)
 
     # Scale from [0,1] to [0,255]
     predictions = predictions.clip(0, 1) * 255.0
@@ -183,7 +176,6 @@ def compute_metrics(model, dataloader, device):
 
     return rmse, mae, ciede2000, r2
 
-
 def create_param_groups(model, base_lr=1e-4, layer_decay=0.9):
     """
     Create parameter groups with layer-wise decayed learning rates.
@@ -192,48 +184,35 @@ def create_param_groups(model, base_lr=1e-4, layer_decay=0.9):
     param_groups = []
 
     # 1) Classifier/head parameters (gets the highest LR, i.e. base_lr)
-    classifier_params = list(model.conv1d.parameters()) + \
-                        list(model.fc.parameters())
+    classifier_params = list(model.conv1d.parameters()) + list(model.fc.parameters())
     param_groups.append({
         "params": classifier_params,
         "lr": base_lr
     })
 
     # 2) Text encoder parameters: we retrieve them from the last layer to the first
-    #    and assign progressively decaying LRs.
-    #    In CLIPTextModel, the main layers often live in model.text_encoder.encoder.layers
     encoder_layers = list(model.text_encoder.text_model.encoder.layers)
-
     num_layers = len(encoder_layers)
-    # e.g. in CLIP, if you want to also include final layers like layer_norm, etc.,
-    # you can adapt as needed or gather them separately.
-    
-    # Start with the last layer (closest to output) => smaller decay => higher LR
-    # Move to the first layer => bigger decay => smaller LR
+
+    # Start with the last layer => smaller decay => higher LR
     encoder_base_lr = base_lr * 0.01
     for layer_idx, layer in enumerate(reversed(encoder_layers)):
-        # Compute the decayed LR for this layer
-        # layer_idx = 0 means the top-most layer (closest to output)
         layer_lr = encoder_base_lr * (layer_decay ** (layer_idx + 1))
-
-        # Collect layer’s parameters
         layer_params = list(layer.parameters())
         param_groups.append({
             "params": layer_params,
             "lr": layer_lr
         })
 
-    # 3) Optionally: If you want an even smaller LR for the embedding layer,
-    #    freeze it or apply further decay:
+    # 3) Embedding layer (optional freeze or decay)
     for param in model.text_encoder.text_model.embeddings.parameters():
-        param.requires_grad = True  # or False if you want it frozen
+        param.requires_grad = True  
     param_groups.append({
         "params": model.text_encoder.text_model.embeddings.parameters(),
         "lr": base_lr * (layer_decay ** (num_layers + 1))
     })
 
     return param_groups
-
 
 # ------------------------- #
 #   K-Fold Cross Validation #
@@ -286,23 +265,34 @@ def cross_validate_clip_model(
         # Create subsets for training and validation
         train_subset = Subset(full_dataset, train_idx)
         val_subset = Subset(full_dataset, val_idx)
-        train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False)
+        train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
+        val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
         
         # Instantiate a fresh model for this fold by reloading the text encoder
         text_encoder_fold = CLIPTextModel.from_pretrained(model_name)
-        model = CLIPTextToPixelCNN(text_encoder_fold).to(device)
+        model = CLIPTextToPixelCNN(text_encoder_fold)
         
+        # If we want to freeze layers:
         if freeze:
             for param in model.text_encoder.parameters():
                 param.requires_grad = False
-            optimizer = optim.AdamW(model.parameters(), lr=lr)
-        elif decay != 1:
+        
+        # If we want custom parameter groups (layer decay), set them up now:
+        if not freeze and decay != 1:
             param_groups = create_param_groups(model, base_lr=lr, layer_decay=decay)
             optimizer = torch.optim.AdamW(param_groups)
         else:
             optimizer = optim.AdamW(model.parameters(), lr=lr)
-        best_model= None
+
+        # Now move the model to the GPU (or CPU)
+        model.to(device)
+
+        # Wrap the model for multiple GPU usage if available
+        if torch.cuda.device_count() > 1:
+            logging.info(f"Using {torch.cuda.device_count()} GPUs!")
+            model = nn.DataParallel(model)
+
+        best_model = None
         best_val_metric = inf
         no_improve_count = 0
         
@@ -310,16 +300,26 @@ def cross_validate_clip_model(
         for epoch in range(num_epochs):
             train_loss = train_one_epoch(model, train_loader, optimizer, device)
             val_metric = validate_one_epoch(model, val_loader, device)
+
+            # For DataParallel, to "save" or "clone" the best model weights, access model.module 
+            # if you need the underlying model. For direct usage, you can keep the entire model's state_dict.
             if val_metric < best_val_metric:
-                best_model = copy.deepcopy(model)
+                # Keep a copy of the entire model state_dict
+                best_model = copy.deepcopy(model.state_dict())
                 best_val_metric = val_metric
                 no_improve_count = 0
             else:
-                no_improve_count +=1
+                no_improve_count += 1
+            
             print(f"Epoch {epoch + 1}/{num_epochs} - Train Loss: {train_loss:.4f} | Val metric: {val_metric:.4f}")
-            if no_improve_count>=EARLY_STOP:
+
+            if no_improve_count >= EARLY_STOP:
                 break
-        rmse, mae, ciede2000, r2 = compute_metrics(best_model, val_loader, device)
+
+        # Reload the best model weights before computing final metrics
+        model.load_state_dict(best_model)
+
+        rmse, mae, ciede2000, r2 = compute_metrics(model, val_loader, device)
         print(f"Fold {fold+1} Metrics: RMSE = {rmse:.2f}, MAE = {mae:.2f}, CIEDE2000 = {ciede2000:.2f}, R² = {r2:.3f}")
         fold_metrics.append({
             'fold': fold + 1,
@@ -331,6 +331,7 @@ def cross_validate_clip_model(
      
         # Save the model for this fold (optional)
         model_path = os.path.join(output_dir, f"model_fold_{fold + 1}.pt")
+        # If using DataParallel, .state_dict() is fine; it contains the underlying module’s weights too.
         torch.save(model.state_dict(), model_path)
         print(f"Model saved to: {model_path}")
     
@@ -383,19 +384,18 @@ if __name__ == '__main__':
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Run cross-validation on your CSV dataset
-    csv_path = "global_training_set.csv"  # or your modified CSV (or sampled CSV)
+    csv_path = "global_training_set.csv"  # or your modified CSV
     metrics_df, summary = cross_validate_clip_model(
         csv_path=csv_path,
         model_name=model_name,
         tokenizer=tokenizer,
         device=device,
-        folds=10,          # For example, 10-fold CV
-        batch_size=160,     # You can try batch sizes of 16 or 32
-        num_epochs=1000,     # Adjust epochs based on training behavior
+        folds=10,          
+        batch_size=640,     
+        num_epochs=1000,    
         lr=args.lr,
-        output_dir="final_clip/",
+        output_dir="cv_results",
         freeze=args.freeze,
         decay=args.decay
     )
 
-    

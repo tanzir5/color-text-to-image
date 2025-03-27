@@ -1,14 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=create.job
-#SBATCH --output=clip_cnn_1e6.out
-#SBATCH --error=clip_cnn_1e6.err
+#SBATCH --output=final_clip_cnn_decay_1e3.out
+#SBATCH --error=final_clip_cnn_decay_1e3.err
 #SBATCH --time=2-02:00
 #SBATCH --mem=50000
 #SBATCH --gres=gpu:1
-#SBATCH --nodelist=quadro2
 
 
+date
 # Test nvidia-smi
 nvidia-smi
 source /home/tpial/myenv/bin/activate
-python3 src/finetune_clip.py 
+python3 src/finetune_clip.py --lr 1e-3 --decay 0.7
+date

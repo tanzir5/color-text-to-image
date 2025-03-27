@@ -1,0 +1,17 @@
+#!/bin/bash
+#SBATCH --job-name=create.job
+#SBATCH --output=par_clip_cnn_decay_1e4.out
+#SBATCH --error=par_clip_cnn_decay_1e4.err
+#SBATCH --time=2-02:00
+#SBATCH --mem=50000
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-task=4
+
+
+
+date
+# Test nvidia-smi
+nvidia-smi
+source /home/tpial/myenv/bin/activate
+srun python3 src/finetune_parallel_clip.py --lr 1e-4 --decay 0.7
+date
