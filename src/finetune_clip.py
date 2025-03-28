@@ -331,7 +331,7 @@ def cross_validate_clip_model(
      
         # Save the model for this fold (optional)
         model_path = os.path.join(output_dir, f"model_fold_{fold + 1}.pt")
-        torch.save(model.state_dict(), model_path)
+        torch.save(best_model.state_dict(), model_path)
         print(f"Model saved to: {model_path}")
     
     metrics_df = pd.DataFrame(fold_metrics)

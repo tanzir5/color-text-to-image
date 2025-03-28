@@ -1,0 +1,15 @@
+#!/bin/bash
+#SBATCH --job-name=roberta
+#SBATCH --output=roberta_cnn_1e5.out
+#SBATCH --error=roberta_cnn_1e5.err
+#SBATCH --time=2-02:00
+#SBATCH --mem=50000
+#SBATCH --gres=gpu:1
+
+
+date
+# Test nvidia-smi
+nvidia-smi
+source /home/tpial/myenv/bin/activate
+python3 src/finetune_roberta.py --lr 1e-5
+date
