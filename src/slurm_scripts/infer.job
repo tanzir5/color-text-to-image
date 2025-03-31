@@ -1,0 +1,15 @@
+#!/bin/bash
+#SBATCH --job-name=infer
+#SBATCH --output=%x-%y.out
+#SBATCH --error=%x-%y.err
+#SBATCH --time=2-02:00
+#SBATCH --mem=50000
+#SBATCH --gres=gpu:1
+
+
+date
+# Test nvidia-smi
+nvidia-smi
+source /home/tpial/myenv/bin/activate
+python -m src.infer 4.2_eval_data.csv 4.2_eval_data_output.csv  export_models/clip_cnn_decay_1e3.pt export_models/roBERTa_cnn_1e5.pt 
+date
